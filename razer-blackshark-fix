@@ -1,0 +1,368 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+
+VENDOR="1532"
+PRODUCT="0555"
+DEVICE_ID="${VENDOR}:${PRODUCT}"
+
+BLOCK_FILE="/run/modprobe.d/99-razer-blackshark-block-audio.conf"
+LOCK_FILE="/run/razer-blackshark-fix.lock"
+DEVICE_TIMEOUT_SECONDS=120
+
+REAL_USER="${SUDO_USER:-}"
+
+if [[ "$EUID" -ne 0 ]]; then
+    echo "ERROR: Run this helper with sudo from your normal desktop session."
+    exit 1
+fi
+
+if [[ -z "$REAL_USER" || "$REAL_USER" == "root" ]]; then
+    echo "ERROR: Run this helper with sudo from your normal desktop session."
+    exit 1
+fi
+
+required_commands=(
+    basename cat env find flock grep id mkdir modprobe python3 readlink
+    rm runuser sleep systemctl udevadm
+)
+
+for command_name in "${required_commands[@]}"; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        printf 'ERROR: Required command not found: %s\n' "$command_name" >&2
+        exit 1
+    fi
+done
+
+if ! id "$REAL_USER" >/dev/null 2>&1; then
+    printf 'ERROR: sudo user does not exist: %s\n' "$REAL_USER" >&2
+    exit 1
+fi
+
+REAL_UID="$(id -u "$REAL_USER")"
+RUNTIME_DIR="/run/user/$REAL_UID"
+SUCCESS=0
+AUDIO_SERVICES_STOPPED=0
+
+log() {
+    printf '\n[Razer-Fix] %s\n' "$*"
+}
+
+user_systemctl() {
+    runuser -u "$REAL_USER" -- \
+        env \
+        XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus" \
+        systemctl --user "$@"
+}
+
+find_razer_device() {
+    local dev
+
+    for dev in /sys/bus/usb/devices/*; do
+        [[ -r "$dev/idVendor" && -r "$dev/idProduct" ]] || continue
+
+        if [[ "$(<"$dev/idVendor")" == "$VENDOR" &&
+              "$(<"$dev/idProduct")" == "$PRODUCT" ]]; then
+            printf '%s\n' "$dev"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+stop_audio_services() {
+    # Mark this before the call because systemctl may stop only some units
+    # before reporting a failure. Cleanup must restart that partial set.
+    AUDIO_SERVICES_STOPPED=1
+
+    if ! user_systemctl stop \
+        wireplumber.service \
+        pipewire-pulse.socket \
+        pipewire-pulse.service \
+        pipewire.socket \
+        pipewire.service \
+        >/dev/null; then
+        echo "ERROR: Could not stop the desktop user's audio services." >&2
+        return 1
+    fi
+}
+
+start_audio_services() {
+    user_systemctl start \
+        pipewire.socket \
+        pipewire.service \
+        pipewire-pulse.socket \
+        pipewire-pulse.service \
+        wireplumber.service
+}
+
+restore_system() {
+    rm -f "$BLOCK_FILE"
+
+    if [[ "$SUCCESS" != "1" ]]; then
+        modprobe --ignore-install snd_usb_audio 2>/dev/null || true
+    fi
+
+    if [[ "$AUDIO_SERVICES_STOPPED" == "1" ]]; then
+        start_audio_services >/dev/null 2>&1 || \
+            echo "WARNING: Could not restart PipeWire/WirePlumber; try: systemctl --user restart pipewire wireplumber" >&2
+    fi
+}
+
+wait_for_volume_event() {
+    local candidate event_name event_path="" input_sysfs usb_sysfs
+    usb_sysfs="$(readlink -f "$RAZER_DEVICE")"
+
+    for _ in {1..100}; do
+        candidate="$(
+            find /dev/input/by-id -maxdepth 1 -type l \
+                -name 'usb-1532_Razer_BlackShark_V2_Pro_2.4_*-event-if03' \
+                -print -quit 2>/dev/null
+        )"
+
+        if [[ -n "$candidate" ]]; then
+            event_name="$(basename "$(readlink -f "$candidate")")"
+            input_sysfs="$(readlink -f "/sys/class/input/$event_name/device")"
+
+            if [[ "$input_sysfs" == "$usb_sysfs"/* ]]; then
+                event_path="$candidate"
+            fi
+        fi
+
+        [[ -n "$event_path" ]] && break
+        sleep 0.1
+    done
+
+    if [[ -z "$event_path" ]]; then
+        echo "ERROR: The dongle's Consumer Control input device was not found."
+        return 1
+    fi
+
+    python3 - "$event_path" <<'PY'
+import os
+import select
+import struct
+import sys
+import time
+
+device = sys.argv[1]
+event_format = "@llHHi"
+event_size = struct.calcsize(event_format)
+deadline = time.monotonic() + 90
+buffer = b""
+
+EV_KEY = 1
+KEY_VOLUMEDOWN = 114
+KEY_VOLUMEUP = 115
+
+print()
+print("Move the headset volume rocker now.")
+print("Waiting for a real KEY_VOLUMEUP or KEY_VOLUMEDOWN event.")
+print("Timeout: 90 seconds.")
+
+fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+
+try:
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([fd], [], [], 0.5)
+
+        if not readable:
+            continue
+
+        try:
+            data = os.read(fd, event_size * 64)
+        except BlockingIOError:
+            continue
+
+        if not data:
+            continue
+
+        buffer += data
+
+        while len(buffer) >= event_size:
+            packet = buffer[:event_size]
+            buffer = buffer[event_size:]
+
+            _, _, event_type, code, value = struct.unpack(
+                event_format,
+                packet
+            )
+
+            if (
+                event_type == EV_KEY
+                and code in (KEY_VOLUMEUP, KEY_VOLUMEDOWN)
+                and value == 1
+            ):
+                name = (
+                    "KEY_VOLUMEUP"
+                    if code == KEY_VOLUMEUP
+                    else "KEY_VOLUMEDOWN"
+                )
+                print(f"\nDetected: {name}")
+                sys.exit(0)
+finally:
+    os.close(fd)
+
+print("\nERROR: No volume event was detected before the timeout.")
+sys.exit(1)
+PY
+}
+
+wait_until_disconnected() {
+    local deadline=$((SECONDS + DEVICE_TIMEOUT_SECONDS))
+
+    while find_razer_device >/dev/null; do
+        if (( SECONDS >= deadline )); then
+            echo "ERROR: Timed out waiting for USB device $DEVICE_ID to be unplugged." >&2
+            return 1
+        fi
+        sleep 0.2
+    done
+}
+
+wait_until_connected() {
+    local deadline=$((SECONDS + DEVICE_TIMEOUT_SECONDS))
+
+    while ! RAZER_DEVICE="$(find_razer_device)"; do
+        if (( SECONDS >= deadline )); then
+            echo "ERROR: Timed out waiting for USB device $DEVICE_ID to reconnect." >&2
+            return 1
+        fi
+        sleep 0.2
+    done
+}
+
+exec 9>"$LOCK_FILE"
+
+if ! flock -n 9; then
+    echo "ERROR: Another instance of razer-blackshark-fix is already running."
+    exit 1
+fi
+
+if [[ ! -d "$RUNTIME_DIR" || ! -S "$RUNTIME_DIR/bus" ]]; then
+    echo "ERROR: The desktop user's systemd session bus is unavailable: $RUNTIME_DIR/bus" >&2
+    exit 1
+fi
+
+if [[ -e "$BLOCK_FILE" ]]; then
+    echo "ERROR: Temporary module block already exists: $BLOCK_FILE" >&2
+    echo "Remove it only after confirming that no other process is using it." >&2
+    exit 1
+fi
+
+mkdir -p /run/modprobe.d
+
+trap restore_system EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+cat >"$BLOCK_FILE" <<'BLOCK'
+# Temporary file created by razer-blackshark-fix; removed on exit.
+blacklist snd_usb_audio
+install snd_usb_audio /bin/false
+BLOCK
+
+log "Stopping PipeWire and WirePlumber for user $REAL_USER."
+stop_audio_services
+
+if find_razer_device >/dev/null; then
+    echo
+    echo "Physically unplug the Razer dongle now."
+    echo "Waiting up to $DEVICE_TIMEOUT_SECONDS seconds."
+    wait_until_disconnected
+fi
+
+log "Dongle is disconnected."
+
+if ! modprobe -r snd_usb_audio; then
+    echo "ERROR: snd_usb_audio could not be unloaded." >&2
+    echo "Another USB audio device may still be using it. No device was forcibly unbound." >&2
+    echo "Disconnect other USB audio devices safely, then run this helper again." >&2
+    exit 1
+fi
+
+if grep -q '^snd_usb_audio ' /proc/modules; then
+    echo "ERROR: snd_usb_audio is still loaded; aborting before reconnect." >&2
+    exit 1
+fi
+
+log "snd_usb_audio is fully unloaded."
+
+echo
+echo "Reconnect USB device $DEVICE_ID now."
+echo "Waiting up to $DEVICE_TIMEOUT_SECONDS seconds."
+
+RAZER_DEVICE=""
+wait_until_connected
+
+log "Dongle detected: ${RAZER_DEVICE##*/}"
+
+for _ in {1..100}; do
+    [[ -d "${RAZER_DEVICE}:1.3" ]] && break
+    sleep 0.1
+done
+
+if [[ ! -d "${RAZER_DEVICE}:1.3" ]]; then
+    echo "ERROR: The dongle HID interface did not appear." >&2
+    exit 1
+fi
+
+log "HID interface is ready."
+
+if ! wait_for_volume_event; then
+    echo
+    echo "The audio driver and user services will be restored during cleanup."
+    exit 1
+fi
+
+log "Volume event received. Loading snd_usb_audio."
+
+rm -f "$BLOCK_FILE"
+
+modprobe --ignore-install snd_usb_audio
+udevadm settle --timeout=10 || true
+
+for _ in {1..100}; do
+    RAZER_DEVICE="$(find_razer_device || true)"
+
+    bound=1
+
+    for interface_number in 0 1 2; do
+        driver_path="${RAZER_DEVICE}:1.${interface_number}/driver"
+
+        if [[ ! -L "$driver_path" ]] ||
+           [[ "$(basename "$(readlink -f "$driver_path")")" != "snd-usb-audio" ]]; then
+            bound=0
+            break
+        fi
+    done
+
+    [[ "$bound" == "1" ]] && break
+    sleep 0.1
+done
+
+if [[ "${bound:-0}" != "1" ]]; then
+    echo "ERROR: The dongle audio interfaces were not fully bound." >&2
+    exit 1
+fi
+
+log "Dongle audio interfaces are bound."
+log "Starting PipeWire and WirePlumber."
+
+start_audio_services
+AUDIO_SERVICES_STOPPED=0
+sleep 4
+
+SUCCESS=1
+trap - EXIT INT TERM
+rm -f "$BLOCK_FILE"
+
+echo
+echo "Razer BlackShark initialized successfully."
+echo
+echo "Expected state:"
+echo "  ✓ Volume Up/Down"
+echo "  ✓ Play/Pause"
+echo "  ✓ Audio output"
+echo "  ✓ Microphone"
