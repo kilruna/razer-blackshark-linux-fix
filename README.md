@@ -38,12 +38,21 @@ The repository can be built and installed as a Flatpak. The app shows up in the
 application menu as **Razer BlackShark Linux Fix** and guides you through the
 same sequence in a small GTK window (current step plus live log).
 
-Build and install from a checkout of this repository:
+Build and install from a checkout of this repository with one command:
+
+```bash
+./build-flatpak.sh
+```
+
+The script adds the flathub remote if missing, installs `flatpak-builder` from
+Flathub once (app ID `org.flatpak.Builder`; on Bazzite the flathub remote is
+usually preconfigured and `~/.local/bin` is on `PATH`), then builds and installs
+the app. The equivalent manual steps are:
 
 ```bash
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub flatpak-builder
-flatpak-builder --user --install --force-clean _build flatpak/com.github.kilruna.razer-blackshark-linux-fix.yml
+flatpak install --user flathub org.flatpak.Builder
+flatpak-builder --user --install --force-clean _build com.github.kilruna.razer-blackshark-linux-fix.yml
 ```
 
 Then start it from the application menu or with:
