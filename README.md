@@ -32,6 +32,41 @@ The helper preserves the tested interactive sequence:
 The helper does not install udev rules, modprobe overrides, or WirePlumber
 configuration. It does not modify existing audio configuration.
 
+## Flatpak (recommended on Bazzite and other immutable systems)
+
+The repository can be built and installed as a Flatpak. The app shows up in the
+application menu as **Razer BlackShark Linux Fix** and guides you through the
+same sequence in a small GTK window (current step plus live log).
+
+Build and install from a checkout of this repository:
+
+```bash
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install flathub flatpak-builder
+flatpak-builder --user --install --force-clean _build flatpak/com.github.kilruna.razer-blackshark-linux-fix.yml
+```
+
+Then start it from the application menu or with:
+
+```bash
+flatpak run com.github.kilruna.razer-blackshark-linux-fix
+```
+
+### First run
+
+On the first start the app offers a one-time setup button. It copies the bundled
+helper to `/usr/local/libexec/razer-blackshark-fix` via `pkexec` (admin password
+prompt from the desktop polkit agent; on Bazzite `/usr/local` is writable because
+it maps to `/var/usrlocal`). Afterwards the start button runs the fix: the
+privileged steps (module block, `modprobe`, input event) run as root through
+`pkexec`, while PipeWire/WirePlumber are stopped and started in your user
+session.
+
+Requirements: a desktop polkit authentication agent (present on Bazzite KDE), an
+active local graphical session, and an admin (`wheel`) account. If the helper was
+already installed with `install.sh` to `/usr/local/sbin/razer-blackshark-fix`,
+the Flatpak uses it and skips the setup.
+
 ## Installation and use
 
 From this repository:
@@ -57,6 +92,13 @@ sudo ./uninstall.sh
 
 Removal deletes only `/usr/local/sbin/razer-blackshark-fix`. There are no
 persistent configuration files to remove.
+
+For the Flatpak additionally run:
+
+```bash
+flatpak uninstall --user com.github.kilruna.razer-blackshark-linux-fix
+sudo rm -f /usr/local/libexec/razer-blackshark-fix
+```
 
 ## Safety warnings
 
