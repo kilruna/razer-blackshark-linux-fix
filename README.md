@@ -45,15 +45,21 @@ Build and install from a checkout of this repository with one command:
 ```
 
 The script adds the flathub remote if missing, installs `flatpak-builder` from
-Flathub once (app ID `org.flatpak.Builder`; on Bazzite the flathub remote is
-usually preconfigured and `~/.local/bin` is on `PATH`), then builds and installs
-the app. The equivalent manual steps are:
+Flathub once (app ID `org.flatpak.Builder`), then builds and installs the app.
+The equivalent manual steps are:
 
 ```bash
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user flathub org.flatpak.Builder
 flatpak-builder --user --install --force-clean _build com.github.kilruna.razer-blackshark-linux-fix.yml
 ```
+
+Note: on Fedora/Bazzite `~/.local/bin` is only added to `PATH` at login if the
+directory already exists. In a shell that was opened before installing
+`org.flatpak.Builder`, `flatpak-builder` is therefore not found; either open a
+new terminal, run `export PATH="$HOME/.local/bin:$PATH"`, or call
+`~/.local/bin/flatpak-builder` directly. `build-flatpak.sh` detects the binary
+in `~/.local/bin` automatically.
 
 Then start it from the application menu or with:
 
