@@ -38,9 +38,12 @@ The repository can be built and installed as a Flatpak. The app shows up in the
 application menu as **Razer BlackShark Linux Fix** and guides you through the
 same sequence in a small GTK window (current step plus live log).
 
-Build and install from a checkout of this repository with one command:
+Clone the repository and build/install with one command (use the PR branch
+until this is merged; afterwards a plain clone of the default branch works):
 
 ```bash
+git clone --branch vibe/flatpak-gui-e20097 https://github.com/kilruna/razer-blackshark-linux-fix.git
+cd razer-blackshark-linux-fix
 ./build-flatpak.sh
 ```
 
