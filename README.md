@@ -58,11 +58,12 @@ flatpak-builder --user --install --force-clean _build com.github.kilruna.razer-b
 ```
 
 Note: on Fedora/Bazzite `~/.local/bin` is only added to `PATH` at login if the
-directory already exists. In a shell that was opened before installing
-`org.flatpak.Builder`, `flatpak-builder` is therefore not found; either open a
-new terminal, run `export PATH="$HOME/.local/bin:$PATH"`, or call
-`~/.local/bin/flatpak-builder` directly. `build-flatpak.sh` detects the binary
-in `~/.local/bin` automatically.
+directory already exists, and flatpak only links exported binaries into it if it
+exists at install time. If `flatpak-builder` is not found afterwards, either
+open a new terminal, run `export PATH="$HOME/.local/bin:$PATH"`, call
+`~/.local/bin/flatpak-builder` directly, or use
+`flatpak run --command=flatpak-builder org.flatpak.Builder ...`.
+`build-flatpak.sh` tries all of these automatically.
 
 Then start it from the application menu or with:
 
