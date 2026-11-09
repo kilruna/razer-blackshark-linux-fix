@@ -10,6 +10,32 @@ LOCK_FILE="/run/razer-blackshark-fix.lock"
 DEVICE_TIMEOUT_SECONDS=120
 
 REAL_USER="${SUDO_USER:-}"
+GUI_MODE=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --user)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --user requires a user name." >&2
+                exit 2
+            fi
+            REAL_USER="$2"
+            shift 2
+            ;;
+        --user=*)
+            REAL_USER="${1#--user=}"
+            shift
+            ;;
+        --gui)
+            GUI_MODE=1
+            shift
+            ;;
+        *)
+            printf 'ERROR: Unknown argument: %s\n' "$1" >&2
+            exit 2
+            ;;
+    esac
+done
 
 if [[ "$EUID" -ne 0 ]]; then
     echo "ERROR: Run this helper with sudo from your normal desktop session."
@@ -45,6 +71,17 @@ AUDIO_SERVICES_STOPPED=0
 
 log() {
     printf '\n[Razer-Fix] %s\n' "$*"
+}
+
+TOTAL_STEPS=7
+
+step() {
+    local number="$1"
+    shift
+    log "$*"
+    if [[ "$GUI_MODE" == "1" ]]; then
+        printf '@@STEP %s/%s: %s\n' "$number" "$TOTAL_STEPS" "$*"
+    fi
 }
 
 user_systemctl() {
@@ -263,13 +300,12 @@ blacklist snd_usb_audio
 install snd_usb_audio /bin/false
 BLOCK
 
-log "Stopping PipeWire and WirePlumber for user $REAL_USER."
+step 1 "Stopping PipeWire and WirePlumber for user $REAL_USER."
 stop_audio_services
 
 if find_razer_device >/dev/null; then
     echo
-    echo "Physically unplug the Razer dongle now."
-    echo "Waiting up to $DEVICE_TIMEOUT_SECONDS seconds."
+    step 2 "Physically unplug the Razer dongle now (waiting up to $DEVICE_TIMEOUT_SECONDS seconds)."
     wait_until_disconnected
 fi
 
@@ -287,11 +323,12 @@ if grep -q '^snd_usb_audio ' /proc/modules; then
     exit 1
 fi
 
-log "snd_usb_audio is fully unloaded."
+step 3 "snd_usb_audio is fully unloaded."
 
 echo
 echo "Reconnect USB device $DEVICE_ID now."
 echo "Waiting up to $DEVICE_TIMEOUT_SECONDS seconds."
+step 4 "Reconnect USB device $DEVICE_ID now (waiting up to $DEVICE_TIMEOUT_SECONDS seconds)."
 
 RAZER_DEVICE=""
 wait_until_connected
@@ -310,13 +347,15 @@ fi
 
 log "HID interface is ready."
 
+step 5 "Move the headset volume rocker now (timeout 90 seconds)."
+
 if ! wait_for_volume_event; then
     echo
     echo "The audio driver and user services will be restored during cleanup."
     exit 1
 fi
 
-log "Volume event received. Loading snd_usb_audio."
+step 6 "Volume event received. Loading snd_usb_audio."
 
 rm -f "$BLOCK_FILE"
 
@@ -348,7 +387,7 @@ if [[ "${bound:-0}" != "1" ]]; then
 fi
 
 log "Dongle audio interfaces are bound."
-log "Starting PipeWire and WirePlumber."
+step 7 "Starting PipeWire and WirePlumber."
 
 start_audio_services
 AUDIO_SERVICES_STOPPED=0

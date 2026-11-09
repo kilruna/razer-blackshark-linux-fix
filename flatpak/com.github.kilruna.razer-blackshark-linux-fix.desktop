@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Razer BlackShark Linux Fix
+Comment=Initialize the Razer BlackShark V2 Pro 2023 USB dongle on Linux
+Comment[de]=Initialisiert den Razer BlackShark V2 Pro 2023 USB-Dongle unter Linux
+Exec=razer-blackshark-fix-gui
+Icon=com.github.kilruna.razer-blackshark-linux-fix
+Terminal=false
+Categories=Utility;System;
+Keywords=razer;blackshark;headset;dongle;audio;microphone;fix;
+Keywords[de]=razer;blackshark;headset;dongle;audio;mikrofon;
+StartupNotify=true
+StartupWMClass=com.github.kilruna.razer-blackshark-linux-fix

@@ -32,6 +32,60 @@ The helper preserves the tested interactive sequence:
 The helper does not install udev rules, modprobe overrides, or WirePlumber
 configuration. It does not modify existing audio configuration.
 
+## Flatpak (recommended on Bazzite and other immutable systems)
+
+The repository can be built and installed as a Flatpak. The app shows up in the
+application menu as **Razer BlackShark Linux Fix** and guides you through the
+same sequence in a small GTK window (current step plus live log).
+
+Clone the repository and build/install with one command (use the PR branch
+until this is merged; afterwards a plain clone of the default branch works):
+
+```bash
+git clone --branch vibe/flatpak-gui-e20097 https://github.com/kilruna/razer-blackshark-linux-fix.git
+cd razer-blackshark-linux-fix
+./build-flatpak.sh
+```
+
+The script adds the flathub remote if missing, installs `flatpak-builder` from
+Flathub once (app ID `org.flatpak.Builder`), then builds and installs the app.
+The equivalent manual steps are:
+
+```bash
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.flatpak.Builder
+flatpak-builder --user --install --force-clean _build com.github.kilruna.razer-blackshark-linux-fix.yml
+```
+
+Note: on Fedora/Bazzite `~/.local/bin` is only added to `PATH` at login if the
+directory already exists, and flatpak only links exported binaries into it if it
+exists at install time. If `flatpak-builder` is not found afterwards, either
+open a new terminal, run `export PATH="$HOME/.local/bin:$PATH"`, call
+`~/.local/bin/flatpak-builder` directly, or use
+`flatpak run --command=flatpak-builder org.flatpak.Builder ...`.
+`build-flatpak.sh` tries all of these automatically.
+
+Then start it from the application menu or with:
+
+```bash
+flatpak run com.github.kilruna.razer-blackshark-linux-fix
+```
+
+### First run
+
+On the first start the app offers a one-time setup button. It copies the bundled
+helper to `/usr/local/libexec/razer-blackshark-fix` via `pkexec` (admin password
+prompt from the desktop polkit agent; on Bazzite `/usr/local` is writable because
+it maps to `/var/usrlocal`). Afterwards the start button runs the fix: the
+privileged steps (module block, `modprobe`, input event) run as root through
+`pkexec`, while PipeWire/WirePlumber are stopped and started in your user
+session.
+
+Requirements: a desktop polkit authentication agent (present on Bazzite KDE), an
+active local graphical session, and an admin (`wheel`) account. If the helper was
+already installed with `install.sh` to `/usr/local/sbin/razer-blackshark-fix`,
+the Flatpak uses it and skips the setup.
+
 ## Installation and use
 
 From this repository:
@@ -57,6 +111,13 @@ sudo ./uninstall.sh
 
 Removal deletes only `/usr/local/sbin/razer-blackshark-fix`. There are no
 persistent configuration files to remove.
+
+For the Flatpak additionally run:
+
+```bash
+flatpak uninstall --user com.github.kilruna.razer-blackshark-linux-fix
+sudo rm -f /usr/local/libexec/razer-blackshark-fix
+```
 
 ## Safety warnings
 
